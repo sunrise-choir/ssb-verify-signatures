@@ -1,7 +1,6 @@
 use base64::decode_config_slice;
 use ed25519_dalek::{verify_batch, PublicKey, Signature};
 use regex::bytes::Regex;
-use serde::Deserialize;
 use sha2::Sha512;
 use ssb_legacy_msg_data::json::{from_slice, to_string};
 use ssb_legacy_msg_data::value::Value;
@@ -15,24 +14,6 @@ lazy_static! {
     static ref SIGNATURE_REGEX: Regex = Regex::new(r##"(,\n\s+"signature":\s".+.ed25519")"##).unwrap();
     static ref SIGNATURE_BYTES_REGEX: Regex = Regex::new(r##"\n\s+"signature":\s"(.+).sig.ed25519""##).unwrap();
     static ref PUBKEY_BYTES_REGEX: Regex = Regex::new(r##"\n\s+"author":\s"@(.+).ed25519""##).unwrap();
-}
-
-#[derive(Deserialize, Debug)]
-struct SsbMessageValue<'a> {
-    signature: &'a str,
-    author: &'a str,
-}
-
-#[derive(Deserialize, Debug)]
-struct SsbMessage<'b> {
-    #[serde(borrow)]
-    value: SsbMessageValue<'b>,
-}
-
-#[derive(Deserialize, Debug)]
-struct SsbMessageRawValue<'a> {
-    #[serde(borrow)]
-    value: &'a [u8],
 }
 
 pub fn verify(msg: &[u8]) -> bool {
