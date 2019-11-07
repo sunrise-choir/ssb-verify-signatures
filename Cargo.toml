@@ -13,4 +13,12 @@ lazy_static = "1.4.0"
 sha2 = "0.8.0"
 ssb-legacy-msg-data = { git="https://github.com/sunrise-choir/legacy-msg-data" }
 rand = "0.6"
+rayon = "1.2"
 regex = "1"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "bench"
+harness = false

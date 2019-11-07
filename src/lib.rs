@@ -1,5 +1,6 @@
 use base64::decode_config_slice;
-use ed25519_dalek::{verify_batch, PublicKey, Signature};
+use ed25519_dalek::{verify_batch as dalek_verify_batch, PublicKey, Signature};
+use rayon::prelude::*;
 use regex::bytes::Regex;
 use sha2::Sha512;
 use ssb_legacy_msg_data::json::{from_slice, to_string};
@@ -10,15 +11,38 @@ use std::borrow::Cow;
 extern crate lazy_static;
 
 lazy_static! {
-    /// This is an example for using doc comment attributes
-    static ref SIGNATURE_REGEX: Regex = Regex::new(r##"(,\n\s+"signature":\s".+.ed25519")"##).unwrap();
-    static ref SIGNATURE_BYTES_REGEX: Regex = Regex::new(r##"\n\s+"signature":\s"(.+).sig.ed25519""##).unwrap();
-    static ref PUBKEY_BYTES_REGEX: Regex = Regex::new(r##"\n\s+"author":\s"@(.+).ed25519""##).unwrap();
+    static ref SIGNATURE_REGEX: Regex =
+        Regex::new(r##"(,\n\s+"signature":\s".+.ed25519")"##).unwrap();
+    static ref SIGNATURE_BYTES_REGEX: Regex =
+        Regex::new(r##"\n\s+"signature":\s"(.+).sig.ed25519""##).unwrap();
+    static ref PUBKEY_BYTES_REGEX: Regex =
+        Regex::new(r##"\n\s+"author":\s"@(.+).ed25519""##).unwrap();
 }
 
 pub fn verify(msg: &[u8]) -> bool {
     let (key, sig, bytes) = get_pubkey_sig_bytes_from_ssb_message(msg);
     key.verify::<Sha512>(&bytes, &sig).is_ok()
+}
+
+pub fn par_verify(msgs: &[&[u8]]) -> bool {
+    msgs.par_iter().all(|msg| verify(msg))
+}
+
+pub fn par_verify_batch(msgs: &[&[u8]]) -> bool {
+    msgs.par_iter()
+        .map(|msg| get_pubkey_sig_bytes_from_ssb_message(msg))
+        .chunks(200)
+        .all(|chunk| {
+            //each chunk is a collection of (key, sig, bytes)
+            let keys = chunk.iter().map(|(key, _, _)| *key).collect::<Vec<_>>();
+            let sigs = chunk.iter().map(|(_, sig, _)| *sig).collect::<Vec<_>>();
+            let bytes = chunk
+                .iter()
+                .map(|(_, _, msg)| msg.as_slice())
+                .collect::<Vec<_>>();
+
+            dalek_verify_batch::<Sha512>(bytes.as_slice(), sigs.as_slice(), keys.as_slice()).is_ok()
+        })
 }
 
 fn get_pubkey_sig_bytes_from_ssb_message<'a>(msg: &'a [u8]) -> (PublicKey, Signature, Vec<u8>) {
@@ -33,6 +57,7 @@ fn get_pubkey_sig_bytes_from_ssb_message<'a>(msg: &'a [u8]) -> (PublicKey, Signa
     // Convert the author bytes to a dalek pub key
     let sig = Signature::from_bytes(&sig_bytes).unwrap();
 
+    // We need the string of the value as that's what's signed (without the sig)
     let value = extract_value_from_entry(msg);
     // Remove the signature
     let bytes_to_verify = remove_signature_from_entry(value.as_bytes());
@@ -90,6 +115,7 @@ mod tests {
         let bytes = get_sig_bytes(VALID_MESSAGE.as_bytes());
         assert_eq!(&bytes[..], &expected[..]);
     }
+
     #[test]
     fn get_key_bytes_works() {
         let expected = base64::decode("U5GvOKP/YUza9k53DSXxT0mk3PIrnyAmessvNfZl5E0=").unwrap();
