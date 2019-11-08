@@ -82,15 +82,18 @@ pub fn par_verify(msgs: &[&[u8]]) -> Result<()> {
 
 const CHUNK_SIZE: usize = 50;
 
-pub fn par_verify_batch(msgs: &[&[u8]]) -> Result<()> {
-    msgs.par_iter()
+pub fn par_verify_batch(msgs: &[Vec<u8>]) -> Result<()> 
+
+{
+    msgs.into_par_iter()
         .chunks(CHUNK_SIZE)
         .try_fold(
             || (),
             |_, chunk| {
                 let keys_sigs_bytes = chunk.iter()
-                    .flat_map(|msg| get_pubkey_sig_bytes_from_ssb_message(msg))
-                    .collect::<ArrayVec<[KeySigBytes; CHUNK_SIZE]>>();
+                    .map(|msg| get_pubkey_sig_bytes_from_ssb_message(msg))
+                    .collect::<Result<ArrayVec<[KeySigBytes; CHUNK_SIZE]>>>()?;
+
                 //each chunk is a collection of (key, sig, bytes)
                 let keys = keys_sigs_bytes
                     .iter()
@@ -180,13 +183,23 @@ fn get_key_bytes<'a>(key: &'a [u8]) -> Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
 
-    use crate::{get_key_bytes, get_sig_bytes, verify};
+    use crate::{get_key_bytes, get_sig_bytes, verify, par_verify_batch, Error};
     use base64;
 
     #[test]
     fn it_works() {
         let msg = VALID_MESSAGE.as_bytes();
         assert!(verify(&msg).is_ok());
+    }
+
+    #[test]
+    fn par_verify_batch_works_with_errors(){
+        let msgs = [VALID_MESSAGE.to_owned().into_bytes(), INVALID_MESSAGE.to_owned().into_bytes(), VALID_MESSAGE.to_owned().into_bytes()];
+        let result = par_verify_batch(&msgs);
+        match result {
+            Err(Error::InvalidSignature{}) => {},
+            _ => {panic!()}
+        }
     }
 
     #[test]
@@ -211,6 +224,24 @@ mod tests {
     "previous": "%IIjwbJbV3WBE/SBLnXEv5XM3Pr+PnMkrAJ8F+7TsUVQ=.sha256",
     "author": "@U5GvOKP/YUza9k53DSXxT0mk3PIrnyAmessvNfZl5E0=.ed25519",
     "sequence": 8,
+    "timestamp": 1470187438539,
+    "hash": "sha256",
+    "content": {
+      "type": "contact",
+      "contact": "@ye+QM09iPcDJD6YvQYjoQc7sLF/IFhmNbEqgdzQo3lQ=.ed25519",
+      "following": true,
+      "blocking": false
+    },
+    "signature": "PkZ34BRVSmGG51vMXo4GvaoS/2NBc0lzdFoVv4wkI8E8zXv4QYyE5o2mPACKOcrhrLJpymLzqpoE70q78INuBg==.sig.ed25519"
+  },
+  "timestamp": 1571140551543
+}"##;
+    const INVALID_MESSAGE: &str = r##"{
+  "key": "%kmXb3MXtBJaNugcEL/Q7G40DgcAkMNTj3yhmxKHjfCM=.sha256",
+  "value": {
+    "previous": "%IIjwbJbV3WBE/SBLnXEv5XM3Pr+PnMkrAJ8F+7TsUVQ=.sha256",
+    "author": "@U5GvOKP/YUza9k53DSXxT0mk3PIrnyAmessvNfZl5E0=.ed25519",
+    "sequence": 9,
     "timestamp": 1470187438539,
     "hash": "sha256",
     "content": {
