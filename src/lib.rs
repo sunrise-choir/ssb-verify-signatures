@@ -1,6 +1,5 @@
 use arrayvec::ArrayVec;
 use base64::decode_config_slice;
-use ed25519_dalek::{verify_batch as dalek_verify_batch, PublicKey, Signature};
 use rayon::prelude::*;
 use regex::bytes::Regex;
 use serde::{Deserialize, Serialize};
@@ -10,6 +9,8 @@ use sha2::Sha512;
 use snafu::{OptionExt, ResultExt, Snafu};
 use ssb_legacy_msg_data::json::{from_slice, to_string, DecodeJsonError, EncodeJsonError};
 use ssb_legacy_msg_data::value::Value;
+
+pub use ed25519_dalek::{verify_batch as dalek_verify_batch, PublicKey, Signature};
 
 #[macro_use]
 extern crate lazy_static;
@@ -116,7 +117,7 @@ pub fn par_verify_batch(msgs: &[Vec<u8>]) -> Result<()>
         .try_reduce(|| (), |_, _| Ok(()))
 }
 
-fn get_pubkey_sig_bytes_from_ssb_message<'a>(
+pub fn get_pubkey_sig_bytes_from_ssb_message<'a>(
     msg: &'a [u8],
 ) -> Result<KeySigBytes> {
     let mut verifiable_msg: Value = from_slice(&msg).context(InvalidSsbMessage)?;
