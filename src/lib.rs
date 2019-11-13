@@ -1,3 +1,15 @@
+//! Verify Secure Scuttlebutt message signatures (in parallel)
+//!
+//! # How is this differnt to [ssb-legacy-msg](https://github.com/sunrise-choir/ssb-legacy-msg)?
+//!
+//! It's built on top of `ssb-legacy-msg` and `ssb-legacy-msg-data` but exposed a hopefully easier
+//! api, and most importantly it lets you _batch process_ a collection of messages. 
+//! 
+//! Batch processing is good for two reasons:
+//! - it means we can utilise multiple cores using [rayon](https://docs.rs/rayon/1.2.0/rayon/index.html)
+//! - it means we can use the [ed25519_dalek verify_batch](https://docs.rs/ed25519-dalek/0.9.1/ed25519_dalek/fn.verify_batch.html) function that takes advantage of
+//! processor SIMD instuctions. 
+//!
 use arrayvec::ArrayVec;
 use base64::decode_config_slice;
 use rayon::prelude::*;

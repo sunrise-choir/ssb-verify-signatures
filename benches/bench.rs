@@ -1,19 +1,17 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use ssb_verify_signatures::{par_verify, par_verify_batch, verify};
+use ssb_verify_signatures::{par_verify_messages, verify_message};
 
 pub fn verify_bench(c: &mut Criterion) {
     c.bench_function("verify", |b| {
-        b.iter(|| verify(black_box(VALID_MESSAGE.as_bytes())))
+        b.iter(|| verify_message(black_box(VALID_MESSAGE.as_bytes())))
     });
 }
 
-pub fn par_verify_batch_bench(c: &mut Criterion) {
+pub fn par_verify_messages_bench(c: &mut Criterion) {
     let msgs = vec![VALID_MESSAGE.as_bytes().to_owned(); 1000];
     c.bench_function("par_verify_batch", |b| {
-        b.iter(|| par_verify_batch(black_box(&msgs)))
+        b.iter(|| par_verify_messages(black_box(&msgs), None))
     });
-    let msgs = &[VALID_MESSAGE.as_bytes(); 1000][..];
-    c.bench_function("par_verify", |b| b.iter(|| par_verify(black_box(msgs))));
 }
 const VALID_MESSAGE: &str = r##"{
   "key": "%kmXb3MXtBJaNugcEL/Q7G40DgcAkMNTj3yhmxKHjfCM=.sha256",
@@ -37,7 +35,7 @@ const VALID_MESSAGE: &str = r##"{
 criterion_group! {
     name = verify_batch;
     config = Criterion::default().sample_size(10);
-    targets = par_verify_batch_bench
+    targets = par_verify_messages_bench
 }
 criterion_group!(verify_single, verify_bench);
 
