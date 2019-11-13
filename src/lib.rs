@@ -10,7 +10,7 @@ use snafu::{OptionExt, ResultExt, Snafu};
 use ssb_legacy_msg_data::json::{from_slice, to_string, DecodeJsonError, EncodeJsonError};
 use ssb_legacy_msg_data::value::Value;
 
-pub use ed25519_dalek::{verify_batch as dalek_verify_batch, PublicKey, Signature};
+use ed25519_dalek::{verify_batch as dalek_verify_batch, PublicKey, Signature};
 
 #[macro_use]
 extern crate lazy_static;
@@ -66,32 +66,206 @@ lazy_static! {
         Regex::new(r##"@([A-Za-z0-9\\/+]{43}=).ed25519"##).unwrap();
 }
 
-pub fn verify(msg: &[u8]) -> Result<()> {
-    let (key, sig, bytes) = get_pubkey_sig_bytes_from_ssb_message(msg)?;
+/// Verify the signature of an entire ssb message that has `key` and `value`.
+///
+/// It expects the messages to be the JSON encoded message of shape: `{key: "", value: {}}`
+///
+/// # Example
+///```
+///use ssb_verify_signatures::verify_message;
+///let valid_message = r##"{
+///  "key": "%kmXb3MXtBJaNugcEL/Q7G40DgcAkMNTj3yhmxKHjfCM=.sha256",
+///  "value": {
+///    "previous": "%IIjwbJbV3WBE/SBLnXEv5XM3Pr+PnMkrAJ8F+7TsUVQ=.sha256",
+///    "author": "@U5GvOKP/YUza9k53DSXxT0mk3PIrnyAmessvNfZl5E0=.ed25519",
+///    "sequence": 8,
+///    "timestamp": 1470187438539,
+///    "hash": "sha256",
+///    "content": {
+///      "type": "contact",
+///      "contact": "@ye+QM09iPcDJD6YvQYjoQc7sLF/IFhmNbEqgdzQo3lQ=.ed25519",
+///      "following": true,
+///      "blocking": false
+///    },
+///    "signature": "PkZ34BRVSmGG51vMXo4GvaoS/2NBc0lzdFoVv4wkI8E8zXv4QYyE5o2mPACKOcrhrLJpymLzqpoE70q78INuBg==.sig.ed25519"
+///  },
+///  "timestamp": 1571140551543
+///}"##;
+/// let result = verify_message(valid_message.as_bytes());
+/// assert!(result.is_ok());
+///```
+pub fn verify_message<T: AsRef<[u8]>>(msg: T) -> Result<()> {
+    let (key, sig, bytes) = get_pubkey_sig_bytes_from_ssb_message(msg.as_ref())?;
     key.verify::<Sha512>(&bytes, &sig)
         .map_err(|_| snafu::NoneError)
         .context(InvalidSignature)
 }
 
-pub fn par_verify(msgs: &[&[u8]]) -> Result<()> {
-    // Ok, I know this looks weird. But we want to be able to try and verify all msgs but abort
-    // with Error when we hit something that did not verify.
-    msgs.par_iter()
-        .try_fold(|| (), |_, msg| verify(msg))
-        .try_reduce(|| (), |_, _| Ok(()))
+/// Verify the signature of a ssb `message.value`.
+///
+/// It expects the messages to be the JSON encoded message value of shape: `{
+/// previous: "",
+/// author: "",
+/// sequence: ...,
+/// timestamp: ...,
+/// content: {},
+/// signature: ""
+/// }`
+///
+/// Returns `Ok(())` if the signature did sign this message, otherwise `Err(InvalidSignature)`
+///
+/// # Example
+///```
+///use ssb_verify_signatures::verify_message_value;
+///let valid_message_value = r##"{
+///  "previous": "%IIjwbJbV3WBE/SBLnXEv5XM3Pr+PnMkrAJ8F+7TsUVQ=.sha256",
+///  "author": "@U5GvOKP/YUza9k53DSXxT0mk3PIrnyAmessvNfZl5E0=.ed25519",
+///  "sequence": 8,
+///  "timestamp": 1470187438539,
+///  "hash": "sha256",
+///  "content": {
+///    "type": "contact",
+///    "contact": "@ye+QM09iPcDJD6YvQYjoQc7sLF/IFhmNbEqgdzQo3lQ=.ed25519",
+///    "following": true,
+///    "blocking": false
+///  },
+///  "signature": "PkZ34BRVSmGG51vMXo4GvaoS/2NBc0lzdFoVv4wkI8E8zXv4QYyE5o2mPACKOcrhrLJpymLzqpoE70q78INuBg==.sig.ed25519"
+///}"##;
+/// let result = verify_message_value(valid_message_value.as_bytes());
+/// assert!(result.is_ok());
+///```
+pub fn verify_message_value<T: AsRef<[u8]>>(msg: T) -> Result<()> {
+    let (key, sig, bytes) = get_pubkey_sig_bytes_from_ssb_message_value(msg.as_ref())?;
+    key.verify::<Sha512>(&bytes, &sig)
+        .map_err(|_| snafu::NoneError)
+        .context(InvalidSignature)
 }
 
-const CHUNK_SIZE: usize = 50;
+pub const CHUNK_SIZE: usize = 50;
 
-pub fn par_verify_batch<'a, T: AsRef<[u8]> >(msgs: &'a [T]) -> Result<()> 
-where [T]: ParallelSlice<T>, T: Sync
+/// Checks signatures of a slice of message values in parallel.
+///
+/// It expects the messages to be the JSON encoded message value of shape: `{
+/// previous: "",
+/// author: "",
+/// sequence: ...,
+/// timestamp: ...,
+/// content: {},
+/// signature: ""
+/// }`
+///
+/// Uses `ed25519_dalek`'s batch verify method to take advantage of processors with SIMD
+/// instructions, and process them in parallel using `rayon`.
+///
+/// You may pass an `Option<usize>` for `chunk_size` or, if `None`, a default of [CHUNK_SIZE] is used.
+///
+/// Returns `Ok(())` if _all_ messages are ok, and an `Err(InvalidSignature)` if any signature fails.
+/// Unfortunately `ed25519_dalek::verify_batch` does not return _which_ message failed to verify,
+/// If you need to work out which message failed, you might have to `find` it using the [verify_message_value] method in this crate once this method returns an error.
+///
+/// # Example
+///```
+///use ssb_verify_signatures::par_verify_message_values;
+///let valid_message_value = r##"{
+///  "previous": "%IIjwbJbV3WBE/SBLnXEv5XM3Pr+PnMkrAJ8F+7TsUVQ=.sha256",
+///  "author": "@U5GvOKP/YUza9k53DSXxT0mk3PIrnyAmessvNfZl5E0=.ed25519",
+///  "sequence": 8,
+///  "timestamp": 1470187438539,
+///  "hash": "sha256",
+///  "content": {
+///    "type": "contact",
+///    "contact": "@ye+QM09iPcDJD6YvQYjoQc7sLF/IFhmNbEqgdzQo3lQ=.ed25519",
+///    "following": true,
+///    "blocking": false
+///  },
+///  "signature": "PkZ34BRVSmGG51vMXo4GvaoS/2NBc0lzdFoVv4wkI8E8zXv4QYyE5o2mPACKOcrhrLJpymLzqpoE70q78INuBg==.sig.ed25519"
+///}"##.as_bytes();
+/// let values = [valid_message_value, valid_message_value, valid_message_value];
+/// let result = par_verify_message_values(&values, None);
+/// assert!(result.is_ok());
+///```
+pub fn par_verify_message_values<'a, T: AsRef<[u8]>>(
+    msgs: &'a [T],
+    chunk_size: Option<usize>,
+) -> Result<()>
+where
+    [T]: ParallelSlice<T>,
+    T: Sync,
 {
-    msgs[..].as_parallel_slice().par_chunks(50)
+    par_verify(
+        msgs,
+        chunk_size,
+        get_pubkey_sig_bytes_from_ssb_message_value,
+    )
+}
+
+/// Checks signatures of a slice of messages in parallel.
+///
+/// It expects the messages to be the JSON encoded message of shape: `{key: "", value: {...}}`
+///
+/// Uses `ed25519_dalek`'s batch verify method to take advantage of processors with SIMD
+/// instructions, and process them in parallel using `rayon`.
+///
+/// You may pass an `Option<usize>` for `chunk_size` or, if `None`, a default of `CHUNK_SIZE` is used.
+///
+/// Returns `Ok(())` if _all_ messages are ok, and an `Err(InvalidSignature)` if any signature fails.
+/// Unfortunately `ed25519_dalek::verify_batch` does not return _which_ message failed to verify,
+/// If you need to work out which message failed, you might have to `find` it using the [verify_message] method in this crate once this method returns an error.
+///
+/// # Example
+///```
+///use ssb_verify_signatures::par_verify_messages;
+///let valid_message = r##"{
+///  "key": "%kmXb3MXtBJaNugcEL/Q7G40DgcAkMNTj3yhmxKHjfCM=.sha256",
+///  "value": {
+///    "previous": "%IIjwbJbV3WBE/SBLnXEv5XM3Pr+PnMkrAJ8F+7TsUVQ=.sha256",
+///    "author": "@U5GvOKP/YUza9k53DSXxT0mk3PIrnyAmessvNfZl5E0=.ed25519",
+///    "sequence": 8,
+///    "timestamp": 1470187438539,
+///    "hash": "sha256",
+///    "content": {
+///      "type": "contact",
+///      "contact": "@ye+QM09iPcDJD6YvQYjoQc7sLF/IFhmNbEqgdzQo3lQ=.ed25519",
+///      "following": true,
+///      "blocking": false
+///    },
+///    "signature": "PkZ34BRVSmGG51vMXo4GvaoS/2NBc0lzdFoVv4wkI8E8zXv4QYyE5o2mPACKOcrhrLJpymLzqpoE70q78INuBg==.sig.ed25519"
+///  },
+///  "timestamp": 1571140551543
+///}"##.as_bytes();
+/// let messages = [valid_message, valid_message, valid_message];
+/// let result = par_verify_messages(&messages, None);
+/// assert!(result.is_ok());
+///```
+pub fn par_verify_messages<'a, T: AsRef<[u8]>>(
+    msgs: &'a [T],
+    chunk_size: Option<usize>,
+) -> Result<()>
+where
+    [T]: ParallelSlice<T>,
+    T: Sync,
+{
+    par_verify(msgs, chunk_size, get_pubkey_sig_bytes_from_ssb_message)
+}
+
+fn par_verify<'a, T: AsRef<[u8]>, M: Fn(&[u8]) -> Result<KeySigBytes>>(
+    msgs: &'a [T],
+    chunk_size: Option<usize>,
+    mapper: M,
+) -> Result<()>
+where
+    [T]: ParallelSlice<T>,
+    T: Sync,
+    M: Sync,
+{
+    msgs.as_parallel_slice()
+        .par_chunks(chunk_size.unwrap_or(CHUNK_SIZE))
         .try_fold(
             || (),
             |_, chunk| {
-                let keys_sigs_bytes = chunk.iter()
-                    .map(|msg| get_pubkey_sig_bytes_from_ssb_message(msg.as_ref()))
+                let keys_sigs_bytes = chunk
+                    .iter()
+                    .map(|msg| mapper(msg.as_ref()))
                     .collect::<Result<ArrayVec<[KeySigBytes; CHUNK_SIZE]>>>()?;
 
                 //each chunk is a collection of (key, sig, bytes)
@@ -116,16 +290,34 @@ where [T]: ParallelSlice<T>, T: Sync
         .try_reduce(|| (), |_, _| Ok(()))
 }
 
-pub fn get_pubkey_sig_bytes_from_ssb_message<'a>(
-    msg: &'a [u8],
-) -> Result<KeySigBytes> {
+fn get_pubkey_sig_bytes_from_ssb_message_value<'a>(msg: &'a [u8]) -> Result<KeySigBytes> {
     let mut verifiable_msg: Value = from_slice(&msg).context(InvalidSsbMessage)?;
+    let message_value: SsbMessageValue =
+        serde_json::from_slice(msg).context(InvalidSsbMessageJson)?;
+
+    get_pubkey_sig_bytes_from_decoded_values(&mut verifiable_msg, &message_value)
+}
+fn get_pubkey_sig_bytes_from_ssb_message<'a>(msg: &'a [u8]) -> Result<KeySigBytes> {
+    let message_value: Value = from_slice(&msg).context(InvalidSsbMessage)?;
     let message: SsbMessage = serde_json::from_slice(msg).context(InvalidSsbMessageJson)?;
 
+    let mut verifiable_msg = if let Value::Object(kv) = message_value {
+        kv.get("value").context(InvalidMessageNoValue)?.clone()
+    } else {
+        return Err(Error::InvalidMessageNoValue);
+    };
+
+    get_pubkey_sig_bytes_from_decoded_values(&mut verifiable_msg, &message.value)
+}
+
+fn get_pubkey_sig_bytes_from_decoded_values(
+    verifiable_msg: &mut Value,
+    message_value: &SsbMessageValue,
+) -> Result<KeySigBytes> {
     // Parse the signature string
-    let sig_bytes = get_sig_bytes(message.value.signature.as_bytes())?;
+    let sig_bytes = get_sig_bytes(message_value.signature.as_bytes())?;
     // Parse the author string
-    let key_bytes = get_key_bytes(message.value.author.as_bytes())?;
+    let key_bytes = get_key_bytes(message_value.author.as_bytes())?;
 
     // Convert the signature bytes to a dalek signature
     let key = PublicKey::from_bytes(&key_bytes)
@@ -139,21 +331,13 @@ pub fn get_pubkey_sig_bytes_from_ssb_message<'a>(
 
     // Modify the val by removing the signature
     if let Value::Object(ref mut msg) = verifiable_msg {
-        if let Some(Value::Object(ref mut v)) = msg.get_mut("value") {
-            v.remove("signature".to_owned());
-        }
-    };
-
-    // Get the value from the message as this is what was signed
-    let verifiable_msg_value = match verifiable_msg {
-        Value::Object(ref mut o) => o.get("value").context(InvalidMessageNoValue)?,
-        _ => panic!(),
+        msg.remove("signature".to_owned());
     };
 
     // Encode the message to a string with out the signature. This was how it was when it was
     // signed by the author.
-    let bytes_to_verify = to_string(&verifiable_msg_value, false)
-        .context(UnableToEncodeMessageToValidSigningEncoding)?;
+    let bytes_to_verify =
+        to_string(&verifiable_msg, false).context(UnableToEncodeMessageToValidSigningEncoding)?;
 
     Ok((key, sig, bytes_to_verify.into_bytes()))
 }
@@ -183,22 +367,54 @@ fn get_key_bytes<'a>(key: &'a [u8]) -> Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
 
-    use crate::{get_key_bytes, get_sig_bytes, verify, par_verify_batch, Error};
+    use crate::{
+        get_key_bytes, get_sig_bytes, par_verify_message_values, par_verify_messages,
+        verify_message, verify_message_value, Error,
+    };
     use base64;
 
     #[test]
-    fn it_works() {
+    fn verify_message_works() {
         let msg = VALID_MESSAGE.as_bytes();
-        assert!(verify(&msg).is_ok());
+        assert!(verify_message(&msg).is_ok());
+    }
+    #[test]
+    fn verify_message_value_works() {
+        let msg = VALID_MESSAGE_VALUE.as_bytes();
+        assert!(verify_message_value(&msg).is_ok());
     }
 
     #[test]
-    fn par_verify_batch_works_with_errors(){
-        let msgs = [VALID_MESSAGE.to_owned().into_bytes(), INVALID_MESSAGE.to_owned().into_bytes(), VALID_MESSAGE.to_owned().into_bytes()];
-        let result = par_verify_batch(&msgs);
+    fn par_verify_messages_works() {
+        let msgs = [
+            VALID_MESSAGE.as_bytes(),
+            VALID_MESSAGE.as_bytes(),
+            VALID_MESSAGE.as_bytes(),
+        ];
+        let result = par_verify_messages(&msgs, None);
+        assert!(result.is_ok());
+    }
+    #[test]
+    fn par_verify_messages_values_works() {
+        let msgs = [
+            VALID_MESSAGE_VALUE.as_bytes(),
+            VALID_MESSAGE_VALUE.as_bytes(),
+            VALID_MESSAGE_VALUE.as_bytes(),
+        ];
+        let result = par_verify_message_values(&msgs, None);
+        assert!(result.is_ok());
+    }
+    #[test]
+    fn par_verify_batch_works_with_errors() {
+        let msgs = [
+            VALID_MESSAGE.as_bytes(),
+            INVALID_MESSAGE.as_bytes(),
+            VALID_MESSAGE.as_bytes(),
+        ];
+        let result = par_verify_messages(&msgs, None);
         match result {
-            Err(Error::InvalidSignature{}) => {},
-            _ => {panic!()}
+            Err(Error::InvalidSignature {}) => {}
+            _ => panic!(),
         }
     }
 
@@ -235,6 +451,20 @@ mod tests {
     "signature": "PkZ34BRVSmGG51vMXo4GvaoS/2NBc0lzdFoVv4wkI8E8zXv4QYyE5o2mPACKOcrhrLJpymLzqpoE70q78INuBg==.sig.ed25519"
   },
   "timestamp": 1571140551543
+}"##;
+    const VALID_MESSAGE_VALUE: &str = r##"{
+  "previous": "%IIjwbJbV3WBE/SBLnXEv5XM3Pr+PnMkrAJ8F+7TsUVQ=.sha256",
+  "author": "@U5GvOKP/YUza9k53DSXxT0mk3PIrnyAmessvNfZl5E0=.ed25519",
+  "sequence": 8,
+  "timestamp": 1470187438539,
+  "hash": "sha256",
+  "content": {
+    "type": "contact",
+    "contact": "@ye+QM09iPcDJD6YvQYjoQc7sLF/IFhmNbEqgdzQo3lQ=.ed25519",
+    "following": true,
+    "blocking": false
+  },
+  "signature": "PkZ34BRVSmGG51vMXo4GvaoS/2NBc0lzdFoVv4wkI8E8zXv4QYyE5o2mPACKOcrhrLJpymLzqpoE70q78INuBg==.sig.ed25519"
 }"##;
     const INVALID_MESSAGE: &str = r##"{
   "key": "%kmXb3MXtBJaNugcEL/Q7G40DgcAkMNTj3yhmxKHjfCM=.sha256",
