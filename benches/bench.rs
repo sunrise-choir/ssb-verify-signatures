@@ -8,11 +8,12 @@ pub fn verify_bench(c: &mut Criterion) {
 }
 
 pub fn par_verify_batch_bench(c: &mut Criterion) {
-    let msgs = [VALID_MESSAGE.as_bytes(); 1000];
+    let msgs = vec![VALID_MESSAGE.as_bytes().to_owned(); 1000];
     c.bench_function("par_verify_batch", |b| {
         b.iter(|| par_verify_batch(black_box(&msgs)))
     });
-    c.bench_function("par_verify", |b| b.iter(|| par_verify(black_box(&msgs))));
+    let msgs = &[VALID_MESSAGE.as_bytes(); 1000][..];
+    c.bench_function("par_verify", |b| b.iter(|| par_verify(black_box(msgs))));
 }
 const VALID_MESSAGE: &str = r##"{
   "key": "%kmXb3MXtBJaNugcEL/Q7G40DgcAkMNTj3yhmxKHjfCM=.sha256",

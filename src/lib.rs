@@ -83,16 +83,15 @@ pub fn par_verify(msgs: &[&[u8]]) -> Result<()> {
 
 const CHUNK_SIZE: usize = 50;
 
-pub fn par_verify_batch(msgs: &[Vec<u8>]) -> Result<()> 
-
+pub fn par_verify_batch<'a, T: AsRef<[u8]> >(msgs: &'a [T]) -> Result<()> 
+where [T]: ParallelSlice<T>, T: Sync
 {
-    msgs.into_par_iter()
-        .chunks(CHUNK_SIZE)
+    msgs[..].as_parallel_slice().par_chunks(50)
         .try_fold(
             || (),
             |_, chunk| {
                 let keys_sigs_bytes = chunk.iter()
-                    .map(|msg| get_pubkey_sig_bytes_from_ssb_message(msg))
+                    .map(|msg| get_pubkey_sig_bytes_from_ssb_message(msg.as_ref()))
                     .collect::<Result<ArrayVec<[KeySigBytes; CHUNK_SIZE]>>>()?;
 
                 //each chunk is a collection of (key, sig, bytes)
