@@ -1,8 +1,10 @@
-Verify Secure Scuttlebutt message signatures (in parallel)
+# ssb-verify-signatures
 
-# How is this different to [ssb-legacy-msg](https://github.com/sunrise-choir/ssb-legacy-msg)?
+> Verify Secure Scuttlebutt message signatures (in parallel)
 
-It's built on top of `ssb-legacy-msg` and `ssb-legacy-msg-data` but exposed a hopefully easier
+## How is this different to [ssb-legacy-msg](https://github.com/sunrise-choir/ssb-legacy-msg)?
+
+It's built on top of `ssb-legacy-msg` and `ssb-legacy-msg-data` but exposes a hopefully easier
 api, and most importantly it lets you _batch process_ a collection of messages. 
 
 Batch processing is good for two reasons:
