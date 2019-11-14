@@ -1,6 +1,11 @@
+[![Build Status](https://travis-ci.org/sunrise-choir/ssb-verify-signatures.svg?branch=master)](https://travis-ci.org/sunrise-choir/ssb-verify-signatures)
 # ssb-verify-signatures
 
 > Verify Secure Scuttlebutt message signatures (in parallel)
+
+## Docs
+
+[Rustdocs](https://sunrise-choir.github.io/ssb-verify-signatures/ssb_verify_signatures/index.html)
 
 ## How is this different to [ssb-legacy-msg](https://github.com/sunrise-choir/ssb-legacy-msg)?
 
