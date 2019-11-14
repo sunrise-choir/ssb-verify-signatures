@@ -15,7 +15,7 @@ api, and most importantly it lets you _batch process_ a collection of messages.
 Batch processing is good for two reasons:
 - it means we can utilise multiple cores using [rayon](https://docs.rs/rayon/1.2.0/rayon/index.html)
 - it means we can use the [ed25519_dalek verify_batch](https://docs.rs/ed25519-dalek/0.9.1/ed25519_dalek/fn.verify_batch.html) function that takes advantage of
-processor SIMD instuctions. 
+processor SIMD instructions. 
 
 Benchmarking on a 2016 2 core i5 shows that batch processing with `par_verify_messages` is ~3.6 times faster than using `verify_message` 
 
