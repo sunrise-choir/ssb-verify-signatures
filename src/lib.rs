@@ -24,7 +24,7 @@ use snafu::{OptionExt, ResultExt, Snafu};
 use ssb_legacy_msg_data::json::{from_slice, to_string, DecodeJsonError, EncodeJsonError};
 use ssb_legacy_msg_data::value::Value;
 
-use ed25519_dalek::{verify_batch as dalek_verify_batch, PublicKey, Signature};
+use ed25519_dalek::{verify_batch as dalek_verify_batch, PublicKey, Signature, Verifier};
 
 #[macro_use]
 extern crate lazy_static;
@@ -110,7 +110,7 @@ lazy_static! {
 ///```
 pub fn verify_message<T: AsRef<[u8]>>(msg: T) -> Result<()> {
     let (key, sig, bytes) = get_pubkey_sig_bytes_from_ssb_message(msg.as_ref())?;
-    key.verify_strict(&bytes, &sig)
+    key.verify(&bytes, &sig)
         .map_err(|_| snafu::NoneError)
         .context(InvalidSignature)
 }
@@ -150,7 +150,7 @@ pub fn verify_message<T: AsRef<[u8]>>(msg: T) -> Result<()> {
 ///```
 pub fn verify_message_value<T: AsRef<[u8]>>(msg: T) -> Result<()> {
     let (key, sig, bytes) = get_pubkey_sig_bytes_from_ssb_message_value(msg.as_ref())?;
-    key.verify_strict(&bytes, &sig)
+    key.verify(&bytes, &sig)
         .map_err(|_| snafu::NoneError)
         .context(InvalidSignature)
 }
