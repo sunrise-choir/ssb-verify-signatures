@@ -8,7 +8,7 @@ license = "AGPL-3.0"
 
 
 [dependencies]
-arrayvec = "0.5.1"
+arrayvec = "0.5.2"
 base64 = "0.13.0"
 ed25519-dalek = { version = "1.0.1", features = ["batch"] }
 lazy_static = "1.4.0"
