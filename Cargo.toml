@@ -20,6 +20,7 @@ ssb-legacy-msg-data = "0.1.2"
 rand = "0.8.3"
 rayon = "1.5.1"
 regex = "1"
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 criterion = "0.3"
