@@ -3,30 +3,28 @@
 //! # How is this different to [ssb-legacy-msg](https://github.com/sunrise-choir/ssb-legacy-msg)?
 //!
 //! It's built on top of `ssb-legacy-msg` and `ssb-legacy-msg-data` but exposed a hopefully easier
-//! api, and most importantly it lets you _batch process_ a collection of messages. 
-//! 
+//! api, and most importantly it lets you _batch process_ a collection of messages.
+//!
 //! Batch processing is good for two reasons:
 //! - it means we can utilise multiple cores using [rayon](https://docs.rs/rayon/1.2.0/rayon/index.html)
 //! - it means we can use the [ed25519_dalek verify_batch](https://docs.rs/ed25519-dalek/0.9.1/ed25519_dalek/fn.verify_batch.html) function that takes advantage of
-//! processor SIMD instuctions. 
+//! processor SIMD instuctions.
 //!
-//! Benchmarking on a 2016 2 core i5 shows that batch processing with [par_verify_messages] is ~3.6 times faster than using [verify_message] 
+//! Benchmarking on a 2016 2 core i5 shows that batch processing with [par_verify_messages] is ~3.6 times faster than using [verify_message]
 //!
-//! Benchmarking on Android on a [One Plus 5T](https://en.wikipedia.org/wiki/OnePlus_5T) (8 core arm64) shows that batch processing with [par_verify_messages] is ~9.9 times faster than using [verify_message]! 
+//! Benchmarking on Android on a [One Plus 5T](https://en.wikipedia.org/wiki/OnePlus_5T) (8 core arm64) shows that batch processing with [par_verify_messages] is ~9.9 times faster than using [verify_message]!
 //!
 use arrayvec::ArrayVec;
 use base64::decode_config_slice;
 use rayon::prelude::*;
 use regex::bytes::Regex;
 use serde::{Deserialize, Serialize};
-use serde_json;
 use serde_json::Error as SerdeJsonError;
-use sha2::Sha512;
 use snafu::{OptionExt, ResultExt, Snafu};
 use ssb_legacy_msg_data::json::{from_slice, to_string, DecodeJsonError, EncodeJsonError};
 use ssb_legacy_msg_data::value::Value;
 
-use ed25519_dalek::{verify_batch as dalek_verify_batch, PublicKey, Signature};
+use ed25519_dalek::{verify_batch as dalek_verify_batch, PublicKey, Signature, Verifier};
 
 #[macro_use]
 extern crate lazy_static;
@@ -112,7 +110,7 @@ lazy_static! {
 ///```
 pub fn verify_message<T: AsRef<[u8]>>(msg: T) -> Result<()> {
     let (key, sig, bytes) = get_pubkey_sig_bytes_from_ssb_message(msg.as_ref())?;
-    key.verify::<Sha512>(&bytes, &sig)
+    key.verify(&bytes, &sig)
         .map_err(|_| snafu::NoneError)
         .context(InvalidSignature)
 }
@@ -152,7 +150,7 @@ pub fn verify_message<T: AsRef<[u8]>>(msg: T) -> Result<()> {
 ///```
 pub fn verify_message_value<T: AsRef<[u8]>>(msg: T) -> Result<()> {
     let (key, sig, bytes) = get_pubkey_sig_bytes_from_ssb_message_value(msg.as_ref())?;
-    key.verify::<Sha512>(&bytes, &sig)
+    key.verify(&bytes, &sig)
         .map_err(|_| snafu::NoneError)
         .context(InvalidSignature)
 }
@@ -200,8 +198,8 @@ pub const CHUNK_SIZE: usize = 50;
 /// let result = par_verify_message_values(&values, None);
 /// assert!(result.is_ok());
 ///```
-pub fn par_verify_message_values<'a, T: AsRef<[u8]>>(
-    msgs: &'a [T],
+pub fn par_verify_message_values<T: AsRef<[u8]>>(
+    msgs: &[T],
     chunk_size: Option<usize>,
 ) -> Result<()>
 where
@@ -253,10 +251,7 @@ where
 /// let result = par_verify_messages(&messages, None);
 /// assert!(result.is_ok());
 ///```
-pub fn par_verify_messages<'a, T: AsRef<[u8]>>(
-    msgs: &'a [T],
-    chunk_size: Option<usize>,
-) -> Result<()>
+pub fn par_verify_messages<T: AsRef<[u8]>>(msgs: &[T], chunk_size: Option<usize>) -> Result<()>
 where
     [T]: ParallelSlice<T>,
     T: Sync,
@@ -264,8 +259,8 @@ where
     par_verify(msgs, chunk_size, get_pubkey_sig_bytes_from_ssb_message)
 }
 
-fn par_verify<'a, T: AsRef<[u8]>, M: Fn(&[u8]) -> Result<KeySigBytes>>(
-    msgs: &'a [T],
+fn par_verify<T: AsRef<[u8]>, M: Fn(&[u8]) -> Result<KeySigBytes>>(
+    msgs: &[T],
     chunk_size: Option<usize>,
     mapper: M,
 ) -> Result<()>
@@ -298,7 +293,7 @@ where
                     .map(|(_, _, msg)| msg.as_slice())
                     .collect::<ArrayVec<[_; CHUNK_SIZE]>>();
 
-                dalek_verify_batch::<Sha512>(bytes.as_slice(), sigs.as_slice(), keys.as_slice())
+                dalek_verify_batch(bytes.as_slice(), sigs.as_slice(), keys.as_slice())
                     .map_err(|_| snafu::NoneError)
                     .context(InvalidSignature)
             },
@@ -306,14 +301,14 @@ where
         .try_reduce(|| (), |_, _| Ok(()))
 }
 
-fn get_pubkey_sig_bytes_from_ssb_message_value<'a>(msg: &'a [u8]) -> Result<KeySigBytes> {
+fn get_pubkey_sig_bytes_from_ssb_message_value(msg: &[u8]) -> Result<KeySigBytes> {
     let mut verifiable_msg: Value = from_slice(&msg).context(InvalidSsbMessage)?;
     let message_value: SsbMessageValue =
         serde_json::from_slice(msg).context(InvalidSsbMessageJson)?;
 
     get_pubkey_sig_bytes_from_decoded_values(&mut verifiable_msg, &message_value)
 }
-fn get_pubkey_sig_bytes_from_ssb_message<'a>(msg: &'a [u8]) -> Result<KeySigBytes> {
+fn get_pubkey_sig_bytes_from_ssb_message(msg: &[u8]) -> Result<KeySigBytes> {
     let message_value: Value = from_slice(&msg).context(InvalidSsbMessage)?;
     let message: SsbMessage = serde_json::from_slice(msg).context(InvalidSsbMessageJson)?;
 
@@ -341,9 +336,7 @@ fn get_pubkey_sig_bytes_from_decoded_values(
         .context(InvalidKeyBytes)?;
 
     // Convert the author bytes to a dalek pub key
-    let sig = Signature::from_bytes(&sig_bytes)
-        .map_err(|_| snafu::NoneError)
-        .context(InvalidSignatureBytes)?;
+    let sig = Signature::new(sig_bytes);
 
     // Modify the val by removing the signature
     if let Value::Object(ref mut msg) = verifiable_msg {
@@ -358,7 +351,7 @@ fn get_pubkey_sig_bytes_from_decoded_values(
     Ok((key, sig, bytes_to_verify.into_bytes()))
 }
 
-fn get_sig_bytes<'a>(sig: &'a [u8]) -> Result<[u8; 64]> {
+fn get_sig_bytes(sig: &[u8]) -> Result<[u8; 64]> {
     let caps = SIGNATURE_BYTES_REGEX
         .captures(sig)
         .context(InvalidSignatureString)?;
@@ -369,7 +362,7 @@ fn get_sig_bytes<'a>(sig: &'a [u8]) -> Result<[u8; 64]> {
     Ok(buff)
 }
 
-fn get_key_bytes<'a>(key: &'a [u8]) -> Result<[u8; 32]> {
+fn get_key_bytes(key: &[u8]) -> Result<[u8; 32]> {
     let caps = PUBKEY_BYTES_REGEX
         .captures(key)
         .context(InvalidAuthorString)?;
