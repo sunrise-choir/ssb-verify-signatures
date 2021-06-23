@@ -207,6 +207,71 @@ pub fn verify_message_value_with_hmac<T: AsRef<[u8]>>(msg: T, hmac: &[u8]) -> Re
 
 pub const CHUNK_SIZE: usize = 50;
 
+pub fn par_verify_message_values_with_hmac<T: AsRef<[u8]>>(
+    msgs: &[T],
+    hmac: &[u8],
+    chunk_size: Option<usize>,
+) -> Result<()>
+where
+    [T]: ParallelSlice<T>,
+    T: Sync,
+{
+    par_verify_with_hmac(
+        msgs,
+        hmac,
+        chunk_size,
+        get_pubkey_sig_bytes_from_ssb_message_value,
+    )
+}
+
+fn par_verify_with_hmac<T: AsRef<[u8]>, M: Fn(&[u8]) -> Result<KeySigBytes>>(
+    msgs: &[T],
+    hmac: &[u8],
+    chunk_size: Option<usize>,
+    mapper: M,
+) -> Result<()>
+where
+    [T]: ParallelSlice<T>,
+    T: Sync,
+    M: Sync,
+{
+    let hmac_key = NetworkKey::from_slice(hmac).context(InvalidHmac)?;
+
+    msgs.as_parallel_slice()
+        .par_chunks(chunk_size.unwrap_or(CHUNK_SIZE))
+        .try_fold(
+            || (),
+            |_, chunk| {
+                let keys_sigs_bytes = chunk
+                    .iter()
+                    .map(|msg| mapper(msg.as_ref()))
+                    .collect::<Result<ArrayVec<[KeySigBytes; CHUNK_SIZE]>>>()?;
+
+                //each chunk is a collection of (key, sig, bytes)
+                let keys = keys_sigs_bytes
+                    .iter()
+                    .map(|(key, _, _)| *key)
+                    .collect::<ArrayVec<[_; CHUNK_SIZE]>>();
+                let sigs = keys_sigs_bytes
+                    .iter()
+                    .map(|(_, sig, _)| *sig)
+                    .collect::<ArrayVec<[_; CHUNK_SIZE]>>();
+                let bytes = keys_sigs_bytes
+                    .iter()
+                    .map(|(_, _, msg)| msg.as_slice())
+                    // TODO: handle the unwrap
+                    .map(|msg| get_hmac_tag_bytes(&hmac_key, msg).unwrap())
+                    .map(|tag| &tag)
+                    .collect::<ArrayVec<[_; CHUNK_SIZE]>>();
+
+                dalek_verify_batch(bytes.as_slice(), sigs.as_slice(), keys.as_slice())
+                    .map_err(|_| snafu::NoneError)
+                    .context(InvalidSignature)
+            },
+        )
+        .try_reduce(|| (), |_, _| Ok(()))
+}
+
 /// Checks signatures of a slice of message values in parallel.
 ///
 /// It expects the messages to be the JSON encoded message value of shape: `{
@@ -420,6 +485,15 @@ fn get_key_bytes(key: &[u8]) -> Result<[u8; 32]> {
     let key_str = caps.get(1).context(InvalidAuthorString)?;
     let mut buff = [0; 32];
     decode_config_slice(key_str.as_bytes(), base64::STANDARD, &mut buff)
+        .context(InvalidAuthorStringBase64Encoding)?;
+    Ok(buff)
+}
+
+fn get_hmac_tag_bytes(hmac: &NetworkKey, msg: &[u8]) -> Result<[u8; 32]> {
+    let tag = hmac.authenticate(&msg);
+    let tag_bytes = tag.as_bytes();
+    let mut buff = [0; 32];
+    decode_config_slice(tag_bytes, base64::STANDARD, &mut buff)
         .context(InvalidAuthorStringBase64Encoding)?;
     Ok(buff)
 }
