@@ -21,6 +21,7 @@ use regex::bytes::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Error as SerdeJsonError;
 use snafu::{OptionExt, ResultExt, Snafu};
+use ssb_crypto::{AsBytes, NetworkKey};
 use ssb_legacy_msg_data::json::{from_slice, to_string, DecodeJsonError, EncodeJsonError};
 use ssb_legacy_msg_data::value::Value;
 
@@ -56,6 +57,8 @@ pub enum Error {
     InvalidAuthorStringBase64Encoding { source: base64::DecodeError },
     #[snafu(display("Unable to get the value from the message, the message was invalid"))]
     InvalidMessageNoValue,
+    #[snafu(display("The length of the hmac key was not 32 bytes."))]
+    InvalidHmac,
 }
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -151,6 +154,53 @@ pub fn verify_message<T: AsRef<[u8]>>(msg: T) -> Result<()> {
 pub fn verify_message_value<T: AsRef<[u8]>>(msg: T) -> Result<()> {
     let (key, sig, bytes) = get_pubkey_sig_bytes_from_ssb_message_value(msg.as_ref())?;
     key.verify(&bytes, &sig)
+        .map_err(|_| snafu::NoneError)
+        .context(InvalidSignature)
+}
+
+/// Verify the signature of a ssb `message.value` with the given hmac key (also known as the
+/// 'app key', 'SHS key', 'capabilities key' and 'network identifier').
+///
+/// It expects the messages to be the JSON encoded message value of shape: `{
+/// previous: "",
+/// author: "",
+/// sequence: ...,
+/// timestamp: ...,
+/// content: {},
+/// signature: ""
+/// }`
+///
+/// Returns `Ok(())` if the signature did sign this message, otherwise `Err(InvalidSignature)`
+///
+/// # Example
+/// ```
+/// use ssb_verify_signatures::verify_message_value_with_hmac;
+/// let valid_message_value_with_unique_hmac = r##"{
+///  "previous": null,
+///  "sequence": 1,
+///  "author": "@EnPSnV1HZdyE7pcKxqukyhmnwE9076RtAlYclaUMX5g=.ed25519",
+///  "timestamp": 1624360181359,
+///  "hash": "sha256",
+///  "content": {
+///    "type": "example"
+///  },
+///  "signature": "w670wqnD1A5blFaYxDiIhPOTwz8I7syVx30jac1feQK/OywHFfrcLVw2S1KmxK9GzWxvKxLMle/jKjf2+pHtAg==.sig.ed25519"
+/// }"##;
+/// let msg_bytes = valid_message_value_with_unique_hmac.as_bytes();
+/// // this represents the unique hmac the message value was originally signed with
+/// let hmac = base64::decode("CbwuwYXmZgN7ZSuycCXoKGOTU1dGwBex+paeA2kr37U=").unwrap();
+/// let result = verify_message_value_with_hmac(&msg_bytes, &hmac);
+/// assert!(result.is_ok());
+/// ```
+pub fn verify_message_value_with_hmac<T: AsRef<[u8]>>(msg: T, hmac: &[u8]) -> Result<()> {
+    let (key, sig, bytes) = get_pubkey_sig_bytes_from_ssb_message_value(msg.as_ref())?;
+    // deserialize hmac from given byte slice, returns `None` if the slice length isn't 32
+    let hmac_key = NetworkKey::from_slice(hmac).context(InvalidHmac)?;
+    // generate hmac auth tag from msg bytes
+    let tag = hmac_key.authenticate(&bytes);
+    let tag_bytes = tag.as_bytes();
+    // verify using key, tag and signature
+    key.verify(tag_bytes, &sig)
         .map_err(|_| snafu::NoneError)
         .context(InvalidSignature)
 }
@@ -308,6 +358,7 @@ fn get_pubkey_sig_bytes_from_ssb_message_value(msg: &[u8]) -> Result<KeySigBytes
 
     get_pubkey_sig_bytes_from_decoded_values(&mut verifiable_msg, &message_value)
 }
+
 fn get_pubkey_sig_bytes_from_ssb_message(msg: &[u8]) -> Result<KeySigBytes> {
     let message_value: Value = from_slice(&msg).context(InvalidSsbMessage)?;
     let message: SsbMessage = serde_json::from_slice(msg).context(InvalidSsbMessageJson)?;
@@ -378,9 +429,10 @@ mod tests {
 
     use crate::{
         get_key_bytes, get_sig_bytes, par_verify_message_values, par_verify_messages,
-        verify_message, verify_message_value, Error,
+        verify_message, verify_message_value, verify_message_value_with_hmac, Error,
     };
     use base64;
+    use ssb_crypto::{AsBytes, NetworkKey};
 
     #[test]
     fn verify_message_works() {
@@ -443,6 +495,26 @@ mod tests {
         assert_eq!(&bytes[..], &expected[..]);
     }
 
+    #[test]
+    fn verify_message_value_with_hmac_works() {
+        let msg = VALID_MESSAGE_VALUE_UNIQUE_HMAC.as_bytes();
+        let hmac = base64::decode("CbwuwYXmZgN7ZSuycCXoKGOTU1dGwBex+paeA2kr37U=").unwrap();
+        let result = verify_message_value_with_hmac(&msg, &hmac);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn verify_message_value_with_incorrect_hmac_fails() {
+        let msg = VALID_MESSAGE_VALUE_UNIQUE_HMAC.as_bytes();
+        let hmac = NetworkKey::SSB_MAIN_NET;
+        let hmac_bytes = hmac.as_bytes();
+        let result = verify_message_value_with_hmac(&msg, &hmac_bytes);
+        match result {
+            Err(Error::InvalidSignature {}) => {}
+            _ => panic!(),
+        }
+    }
+
     const VALID_MESSAGE: &str = r##"{
   "key": "%kmXb3MXtBJaNugcEL/Q7G40DgcAkMNTj3yhmxKHjfCM=.sha256",
   "value": {
@@ -492,5 +564,17 @@ mod tests {
     "signature": "PkZ34BRVSmGG51vMXo4GvaoS/2NBc0lzdFoVv4wkI8E8zXv4QYyE5o2mPACKOcrhrLJpymLzqpoE70q78INuBg==.sig.ed25519"
   },
   "timestamp": 1571140551543
+}"##;
+
+    const VALID_MESSAGE_VALUE_UNIQUE_HMAC: &str = r##"{
+  "previous": null,
+  "sequence": 1,
+  "author": "@EnPSnV1HZdyE7pcKxqukyhmnwE9076RtAlYclaUMX5g=.ed25519",
+  "timestamp": 1624360181359,
+  "hash": "sha256",
+  "content": {
+    "type": "example"
+  },
+  "signature": "w670wqnD1A5blFaYxDiIhPOTwz8I7syVx30jac1feQK/OywHFfrcLVw2S1KmxK9GzWxvKxLMle/jKjf2+pHtAg==.sig.ed25519"
 }"##;
 }
