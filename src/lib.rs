@@ -437,7 +437,6 @@ fn get_hmac_tag_bytes(hmac: &NetworkKey, msg: &[u8]) -> [u8; 32] {
 
 #[cfg(test)]
 mod tests {
-
     use crate::{
         get_hmac_tag_bytes, get_key_bytes, get_sig_bytes, par_verify_message_values,
         par_verify_messages, verify_message, verify_message_value, Error,
