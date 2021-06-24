@@ -353,7 +353,7 @@ where
 }
 
 fn get_pubkey_sig_bytes_from_ssb_message_value(msg: &[u8]) -> Result<KeySigBytes> {
-    let mut verifiable_msg: Value = from_slice(&msg).context(InvalidSsbMessage)?;
+    let mut verifiable_msg: Value = from_slice(msg).context(InvalidSsbMessage)?;
     let message_value: SsbMessageValue =
         serde_json::from_slice(msg).context(InvalidSsbMessageJson)?;
 
@@ -361,7 +361,7 @@ fn get_pubkey_sig_bytes_from_ssb_message_value(msg: &[u8]) -> Result<KeySigBytes
 }
 
 fn get_pubkey_sig_bytes_from_ssb_message(msg: &[u8]) -> Result<KeySigBytes> {
-    let message_value: Value = from_slice(&msg).context(InvalidSsbMessage)?;
+    let message_value: Value = from_slice(msg).context(InvalidSsbMessage)?;
     let message: SsbMessage = serde_json::from_slice(msg).context(InvalidSsbMessageJson)?;
 
     let mut verifiable_msg = if let Value::Object(kv) = message_value {
