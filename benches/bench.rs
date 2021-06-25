@@ -5,14 +5,34 @@ use ssb_verify_signatures::{
 
 pub fn verify_message_value_bench(c: &mut Criterion) {
     c.bench_function("verify_value", |b| {
-        b.iter(|| verify_message_value(black_box(VALID_MESSAGE_VALUE.as_bytes())))
+        b.iter(|| verify_message_value(black_box(VALID_MESSAGE_VALUE.as_bytes()), None))
     });
 }
 
 pub fn par_verify_message_values_bench(c: &mut Criterion) {
     let msgs = vec![VALID_MESSAGE_VALUE.as_bytes().to_owned(); 1000];
     c.bench_function("par_verify_value_batch", |b| {
-        b.iter(|| par_verify_message_values(black_box(&msgs), None))
+        b.iter(|| par_verify_message_values(black_box(&msgs), None, None))
+    });
+}
+
+pub fn verify_message_value_with_hmac_bench(c: &mut Criterion) {
+    let hmac = base64::decode("CbwuwYXmZgN7ZSuycCXoKGOTU1dGwBex+paeA2kr37U=").unwrap();
+    c.bench_function("verify_value_with_hmac", |b| {
+        b.iter(|| {
+            verify_message_value(
+                black_box(VALID_MESSAGE_VALUE_UNIQUE_HMAC.as_bytes()),
+                Some(&hmac),
+            )
+        })
+    });
+}
+
+pub fn par_verify_message_values_with_hmac_bench(c: &mut Criterion) {
+    let hmac = base64::decode("CbwuwYXmZgN7ZSuycCXoKGOTU1dGwBex+paeA2kr37U=").unwrap();
+    let msgs = vec![VALID_MESSAGE_VALUE_UNIQUE_HMAC.as_bytes().to_owned(); 1000];
+    c.bench_function("par_verify_value_batch_with_hmac", |b| {
+        b.iter(|| par_verify_message_values(black_box(&msgs), Some(&hmac), None))
     });
 }
 
@@ -35,13 +55,23 @@ criterion_group!(verify_batch, par_verify_messages_bench);
 criterion_group!(verify_single, verify_bench);
 criterion_group!(verify_batch_value, par_verify_message_values_bench);
 criterion_group!(verify_single_value, verify_message_value_bench);
+criterion_group!(
+    verify_batch_value_with_hmac,
+    par_verify_message_values_with_hmac_bench
+);
+criterion_group!(
+    verify_single_value_with_hmac,
+    verify_message_value_with_hmac_bench
+);
 
 // Generate a `main` function and execute the benchmark groups
 criterion_main!(
     verify_batch,
     verify_single,
     verify_batch_value,
-    verify_single_value
+    verify_single_value,
+    verify_batch_value_with_hmac,
+    verify_single_value_with_hmac
 );
 
 const VALID_MESSAGE: &str = r##"{
@@ -76,4 +106,16 @@ const VALID_MESSAGE_VALUE: &str = r##"{
     "blocking": false
   },
   "signature": "PkZ34BRVSmGG51vMXo4GvaoS/2NBc0lzdFoVv4wkI8E8zXv4QYyE5o2mPACKOcrhrLJpymLzqpoE70q78INuBg==.sig.ed25519"
+}"##;
+
+const VALID_MESSAGE_VALUE_UNIQUE_HMAC: &str = r##"{
+  "previous": null,
+  "sequence": 1,
+  "author": "@EnPSnV1HZdyE7pcKxqukyhmnwE9076RtAlYclaUMX5g=.ed25519",
+  "timestamp": 1624360181359,
+  "hash": "sha256",
+  "content": {
+    "type": "example"
+  },
+  "signature": "w670wqnD1A5blFaYxDiIhPOTwz8I7syVx30jac1feQK/OywHFfrcLVw2S1KmxK9GzWxvKxLMle/jKjf2+pHtAg==.sig.ed25519"
 }"##;
