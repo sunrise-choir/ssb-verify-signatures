@@ -24,4 +24,4 @@ Benchmarks can be run with `cargo criterion`.
 
 ## License
 
-AGPL-3.0
+LGPL-3.0

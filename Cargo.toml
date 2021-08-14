@@ -6,7 +6,7 @@ edition = "2018"
 description = "Verify signatures of scuttlebutt messages. In parallel."
 repository = "https://github.com/sunrise-choir/ssb-verify-signatures"
 documentation = "https://sunrise-choir.github.io/ssb-verify-signatures/ssb_verify_signatures/index.html"
-license = "AGPL-3.0"
+license = "LGPL-3.0"
 
 [dependencies]
 arrayvec = "0.5.2"
