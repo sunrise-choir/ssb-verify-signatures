@@ -1,6 +1,6 @@
 [package]
 name = "ssb-verify-signatures"
-version = "1.1.0"
+version = "1.1.1"
 authors = ["Piet Geursen <pietgeursen@gmail.com>"]
 edition = "2018"
 description = "Verify signatures of scuttlebutt messages. In parallel."
@@ -17,8 +17,8 @@ itertools = "0.10.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.64"
 snafu = "0.6.10"
-ssb-crypto = "0.2.2"
-ssb-legacy-msg-data = "0.1.3"
+ssb-crypto = "0.2.3"
+ssb-legacy-msg-data = "0.1.4"
 rand = "0.8.3"
 rayon = "1.5.1"
 regex = "1"
